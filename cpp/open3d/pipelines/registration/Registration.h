@@ -175,6 +175,7 @@ RegistrationResult RegistrationICP(
 /// distance.
 /// \param estimation Estimation method.
 /// \param ransac_n Fit ransac with `ransac_n` correspondences.
+/// \param checkers Correspondence checker.
 /// \param criteria Convergence criteria.
 RegistrationResult RegistrationRANSACBasedOnCorrespondence(
         const geometry::PointCloud &source,
@@ -184,6 +185,8 @@ RegistrationResult RegistrationRANSACBasedOnCorrespondence(
         const TransformationEstimation &estimation =
                 TransformationEstimationPointToPoint(false),
         int ransac_n = 6,
+        const std::vector<std::reference_wrapper<const CorrespondenceChecker>>
+                 &checkers = {},
         const RANSACConvergenceCriteria &criteria =
                 RANSACConvergenceCriteria());
 

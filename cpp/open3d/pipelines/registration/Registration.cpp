@@ -195,6 +195,8 @@ RegistrationResult RegistrationRANSACBasedOnCorrespondence(
         const TransformationEstimation &estimation
         /* = TransformationEstimationPointToPoint(false)*/,
         int ransac_n /* = 6*/,
+        const std::vector<std::reference_wrapper<const CorrespondenceChecker>>
+                 &checkers /* = {}*/,
         const RANSACConvergenceCriteria &criteria
         /* = RANSACConvergenceCriteria()*/) {
     if (ransac_n < 3 || (int)corres.size() < ransac_n ||
@@ -205,25 +207,74 @@ RegistrationResult RegistrationRANSACBasedOnCorrespondence(
     CorrespondenceSet ransac_corres(ransac_n);
     RegistrationResult result;
 
-    for (int itr = 0;
-         itr < criteria.max_iteration_ && itr < criteria.max_validation_;
-         itr++) {
-        for (int j = 0; j < ransac_n; j++) {
-            ransac_corres[j] = corres[utility::UniformRandInt(
-                    0, static_cast<int>(corres.size()) - 1)];
+    geometry::KDTreeFlann kdtree(target);
+    int total_validation = 0;
+    bool finished_validation = false;
+    RegistrationResult result_private;
+
+    for (int itr = 0; itr < criteria.max_iteration_; itr++) {
+        if (!finished_validation) {
+            for (int j = 0; j < ransac_n; j++) {
+                ransac_corres[j] = corres[utility::UniformRandInt(
+                        0, static_cast<int>(corres.size()) - 1)];
+            }
+            bool check = true;
+            for (const auto &checker : checkers) {
+                if (!checker.get().require_pointcloud_alignment_ &&
+                    !checker.get().Check(source, target, ransac_corres,
+                                            transformation)) {
+                    check = false;
+                    break;
+                }
+            }
+            if (!check) continue;
+            transformation = estimation.ComputeTransformation(
+                    source, target, ransac_corres);
+            check = true;
+            for (const auto &checker : checkers) {
+                if (checker.get().require_pointcloud_alignment_ &&
+                    !checker.get().Check(source, target, ransac_corres,
+                                            transformation)) {
+                    check = false;
+                    break;
+                }
+            }
+            if (!check) continue;
+            geometry::PointCloud pcd = source;
+            pcd.Transform(transformation);
+
+            RegistrationResult this_result;
+            if (checkers.size() == 0) {
+                if  (itr >= criteria.max_validation_) {
+                    finished_validation = true;
+                }
+
+                this_result = EvaluateRANSACBasedOnCorrespondence(
+                    pcd, target, corres, max_correspondence_distance,
+                    transformation);
+            } else {
+                this_result = GetRegistrationResultAndCorrespondences(
+                    pcd, target, kdtree, max_correspondence_distance,
+                    transformation);
+            }
+
+            if (this_result.fitness_ > result_private.fitness_ ||
+                (this_result.fitness_ == result_private.fitness_ &&
+                this_result.inlier_rmse_ < result_private.inlier_rmse_)) {
+                result_private = this_result;
+            }
+
+            total_validation = total_validation + 1;
+            if (total_validation >= criteria.max_validation_) {
+                finished_validation = true;
+            }
         }
-        transformation =
-                estimation.ComputeTransformation(source, target, ransac_corres);
-        geometry::PointCloud pcd = source;
-        pcd.Transform(transformation);
-        auto this_result = EvaluateRANSACBasedOnCorrespondence(
-                pcd, target, corres, max_correspondence_distance,
-                transformation);
-        if (this_result.fitness_ > result.fitness_ ||
-            (this_result.fitness_ == result.fitness_ &&
-             this_result.inlier_rmse_ < result.inlier_rmse_)) {
-            result = this_result;
-        }
+    }
+
+    if (result_private.fitness_ > result.fitness_ ||
+        (result_private.fitness_ == result.fitness_ &&
+        result_private.inlier_rmse_ < result.inlier_rmse_)) {
+        result = result_private;
     }
     utility::LogDebug("RANSAC: Fitness {:e}, RMSE {:e}", result.fitness_,
                       result.inlier_rmse_);
